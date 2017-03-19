@@ -1,0 +1,6 @@
+[package]
+name = "bmp-operations"
+version = "0.1.0"
+authors = ["Hu Zheng <freetiger18@gmail.com>"]
+
+[dependencies]
