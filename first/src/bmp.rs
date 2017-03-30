@@ -1,93 +1,143 @@
-#[repr(C, packed)]
-pub struct BmpFile {
-    pub bitmap_file_header: [u8; 14],
-    pub dib_header: [u8; 14],
-    pub extra_bit_masks: [u8; 14],
-    pub color_table: [u8; 14],
-    pub gap_1: [u8; 14],
-    pub pixel_array: [u8; 14],
-    pub gap_2: [u8; 14],
-    pub icc_color_profile: [u8; 14],
+use memmap::{Mmap, Protection};
+
+pub struct BmpMmapedFile {
+    path: String,
+    data: Mmap
 }
 
-pub struct DummyFile {
-    pub info: [u8; 14]
+pub trait BmpHeader {
+    fn get_header_field(&self) -> u16;
+    fn get_size(&self) -> u32;
+    fn get_offset(&self) -> u32;
 }
 
-#[repr(C, packed)]
-pub struct BitmapFileHeader {
-    pub header_field: [u8; 2],
-    pub size_in_bytes: [u8; 4],
-    pub reserved_1: [u8; 2],
-    pub reserved_2: [u8; 2],
-    pub offset: [u8; 2],
+pub trait DIBHeader {
+    fn get_dib_header_size(&self) -> u32;
+    fn get_width(&self) -> u32;
+    fn get_height(&self) -> u32;
+    fn get_color_depth(&self) -> u16;
 }
 
-#[repr(C)]
-pub enum DIBHeader {
-    #[repr(C, packed)]
-    BITMAPCOREHEADER {
-        header_size: [u8; 4],
-        width: [u8; 4],
-        height: [u8; 4],
-        color_planes: [u8; 2],
-        bits_per_pixel: [u8; 2],
-    },
-    #[repr(C, packed)]
-    BITMAPINFOHEADER {
-        header_size: [u8; 4],
-        width: [u8; 4],
-        height: [u8; 4],
-        color_planes: [u8; 2],
-        bits_per_pixel: [u8; 2],
-        compression_method: CompressionMethod,
-        image_size: [u8; 4],
-        horizontal_resolution: [u8; 4],
-        vertical_resolution: [u8; 4],
-        colors_in_palette: [u8; 4],
-        important_colors_used: [u8; 4],
+impl BmpMmapedFile {
+    pub fn new(path: &str) -> BmpMmapedFile {
+        BmpMmapedFile {
+            path: String::from(path),
+            data: Mmap::open_path(path, Protection::Read).unwrap()
+        }
+    }
 
+    pub fn get_array(&self) -> &[u8] {
+        return unsafe { self.data.as_slice() }
+    }
+
+    fn get_dib_array(&self) -> &[u8] {
+        let length = match self.get_header_field() {
+            0x4D42 => ((self.get_array()[14] as u32) << 8) + self.get_array()[15] as u32,
+            _ => 0
+        };
+        return &self.get_array()[14..14 + length as usize]
+    }
+
+    fn get_pixel_array(&self) -> &[u8] {
+        let offset = self.get_offset();
+        return &self.get_array()[offset as usize
+            ..
+            (offset as usize + self.get_pixel_array_length())]
+    }
+
+    pub fn get_pixel_array_length(&self) -> usize {
+        return (self.get_width()
+            * self.get_height()
+            * (self.get_color_depth() as u32 / 8)) as usize
+    }
+
+    pub fn get_pixel_count(&self) -> usize {
+        return (self.get_width()
+            * self.get_height()) as usize
+    }
+
+
+    pub fn get_r_mask(&self) -> u32 {
+        return ((self.get_dib_array()[43] as u32) << 24)
+            + ((self.get_dib_array()[42] as u32) << 16)
+            + ((self.get_dib_array()[41] as u32) << 8)
+            + self.get_dib_array()[40] as u32
+    }
+
+
+    pub fn get_g_mask(&self) -> u32 {
+        return ((self.get_dib_array()[47] as u32) << 24)
+            + ((self.get_dib_array()[46] as u32) << 16)
+            + ((self.get_dib_array()[45] as u32) << 8)
+            + self.get_dib_array()[44] as u32
+    }
+
+
+    pub fn get_b_mask(&self) -> u32 {
+        return ((self.get_dib_array()[51] as u32) << 24)
+            + ((self.get_dib_array()[50] as u32) << 16)
+            + ((self.get_dib_array()[49] as u32) << 8)
+            + self.get_dib_array()[48] as u32
+    }
+
+
+    pub fn get_a_mask(&self) -> u32 {
+        return ((self.get_dib_array()[55] as u32) << 24)
+            + ((self.get_dib_array()[54] as u32) << 16)
+            + ((self.get_dib_array()[53] as u32) << 8)
+            + self.get_dib_array()[52] as u32
     }
 }
 
-#[repr(u32)]
-enum CompressionMethod {
-    BI_RGB = 0,
-    BI_RLE8 = 1,
-    BI_RLE4 = 2,
-    BI_BITFIELDS = 3,
-    BI_JPEG = 4,
-    BI_PNG = 5,
-    BI_ALPHABITFIELDS = 6,
+pub trait CloneWithTransformation {
+    fn clone_with() {}
 }
 
+impl BmpHeader for BmpMmapedFile {
+    fn get_size(&self) -> u32 {
+        //        unsafe { std::mem::transmute::<&[u8], u32>(self.get_array()) }
+        return ((self.get_array()[5] as u32) << 24) // TODO: rewrite using some `transmute` thing?
+            + ((self.get_array()[4] as u32) << 16)
+            + ((self.get_array()[3] as u32) << 8)
+            + self.get_array()[2] as u32
+    }
+    fn get_header_field(&self) -> u16 {
+        return ((self.get_array()[1] as u16) << 8)
+            + self.get_array()[0] as u16
+    }
 
-#[repr(C, packed)]
-pub struct BITMAPINFOHEADER {
-
+    fn get_offset(&self) -> u32 {
+        return ((self.get_array()[13] as u32) << 24)
+            + ((self.get_array()[12] as u32) << 16)
+            + ((self.get_array()[11] as u32) << 8)
+            + self.get_array()[10] as u32
+    }
 }
 
-#[repr(C, packed)]
-pub struct ExtractBitMasks {}
+impl DIBHeader for BmpMmapedFile {
+    fn get_dib_header_size(&self) -> u32 {
+        return ((self.get_dib_array()[3] as u32) << 24)
+            + ((self.get_dib_array()[2] as u32) << 16)
+            + ((self.get_dib_array()[1] as u32) << 8)
+            + self.get_dib_array()[0] as u32
+    }
 
-#[repr(C, packed)]
-pub struct ColorTable {}
+    fn get_width(&self) -> u32 {
+        return ((self.get_dib_array()[7] as u32) << 24)
+            + ((self.get_dib_array()[6] as u32) << 16)
+            + ((self.get_dib_array()[5] as u32) << 8)
+            + self.get_dib_array()[4] as u32
+    }
 
-#[repr(C, packed)]
-pub struct PixelArray {}
+    fn get_height(&self) -> u32 {
+        return ((self.get_dib_array()[11] as u32) << 24)
+            + ((self.get_dib_array()[10] as u32) << 16)
+            + ((self.get_dib_array()[9] as u32) << 8)
+            + self.get_dib_array()[8] as u32
+    }
 
-enum Bitmap_Header_Start {}
-
-enum HEADER {
-    GOOD,
-    BAD
-}
-
-
-impl BmpFile {
-    pub fn new() -> DummyFile {
-        return DummyFile {
-            info: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        };
+    fn get_color_depth(&self) -> u16 {
+        return ((self.get_dib_array()[15] as u16) << 8)
+            + self.get_dib_array()[14] as u16
     }
 }
